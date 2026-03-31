@@ -19,12 +19,14 @@
   <!-- React 앱 코드 -->
   <script type="text/babel">
     // ⭐ [고정 연동 주소] 선생님의 구글 시트 웹앱 URL을 아래 따옴표 안에 붙여넣으세요!
-    // 이렇게 해두면 어떤 기기에서 접속하든 매번 환경설정에서 입력할 필요가 없습니다.
     const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbyO9_bTUP1Q0xAt4D2pIv9aTAk0hmGdKyeMwdIy4wPErVkVnqP-bVQjruo8Cm7rnT-U/exec";
+    // ⭐ [관리자 비밀번호] 교사 전용 메뉴에 들어갈 때 사용할 비밀번호입니다. (원하시는 번호로 수정하세요)
+    const ADMIN_PASSWORD = "1234";
 
     const { useState, useEffect, useRef } = React;
 
     function App() {
+      const [isAdmin, setIsAdmin] = useState(false); // 관리자 모드 (숨김 해제 상태)
       const [activeTab, setActiveTab] = useState('scanner');
       const [scannerReady, setScannerReady] = useState(false);
       
@@ -40,25 +42,26 @@
         return [];
       });
       const [scanMessage, setScanMessage] = useState(null);
-      const [webhookUrl, setWebhookUrl] = useState(() => {
-        // 고정 주소가 있으면 그것을 최우선으로 사용하고, 없으면 기존 저장된 것을 불러옵니다.
-        return GOOGLE_SHEET_URL || localStorage.getItem('yaja_webhook') || '';
-      });
-
+      
       useEffect(() => { localStorage.setItem('yaja_students', JSON.stringify(students)); }, [students]);
-      useEffect(() => { localStorage.setItem('yaja_webhook', webhookUrl); }, [webhookUrl]);
       useEffect(() => { localStorage.setItem('yaja_logs', JSON.stringify(logs)); }, [logs]);
 
-      // 컴포넌트 마운트 시 스캐너 라이브러리 준비 완료
       useEffect(() => {
         setScannerReady(true);
       }, []);
 
-      // --- 1. 스캐너 컴포넌트 ---
+      // --- 1. 스캐너 컴포넌트 (오류 해결을 위해 전면 개편) ---
       const ScannerView = () => {
-        const lastScannedRef = useRef(null); // 무한 렌더링 방지를 위해 useRef 사용
+        const lastScannedRef = useRef(null);
+        const html5QrCodeRef = useRef(null);
+        const isScanningRef = useRef(false); // 컴포넌트 언마운트 시 안전한 종료를 위한 참조
+        
+        const [cameras, setCameras] = useState([]);
+        const [selectedCameraId, setSelectedCameraId] = useState('');
+        const [isScanning, setIsScanning] = useState(false);
+        const [cameraError, setCameraError] = useState('');
 
-        // 삑 소리 재생 함수 (웹 오디오 API 활용)
+        // 삑 소리 재생 함수
         const playBeep = () => {
           try {
             const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -69,60 +72,109 @@
             osc.connect(gainNode);
             gainNode.connect(ctx.destination);
             osc.type = 'sine';
-            osc.frequency.setValueAtTime(880, ctx.currentTime); // 880Hz (높은 음)
-            gainNode.gain.setValueAtTime(0.1, ctx.currentTime); // 볼륨 조절
+            osc.frequency.setValueAtTime(880, ctx.currentTime);
+            gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
             osc.start();
-            osc.stop(ctx.currentTime + 0.1); // 0.1초 동안 재생
+            osc.stop(ctx.currentTime + 0.1);
           } catch (e) {
-            console.log("오디오 재생을 지원하지 않는 기기입니다.");
+            console.log("오디오 재생 미지원 기기");
           }
         };
 
+        // 기기에 연결된 카메라 목록 가져오기
         useEffect(() => {
           if (!scannerReady) return;
           
-          // 반응형 스캐너 크기 설정 (모바일 화면 짤림 방지)
-          const qrboxFunction = function(viewfinderWidth, viewfinderHeight) {
-            let minEdgePercentage = 0.7; // 화면의 70% 크기
-            let minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
-            let qrboxSize = Math.floor(minEdgeSize * minEdgePercentage);
-            return { width: qrboxSize, height: qrboxSize };
-          };
+          window.Html5Qrcode.getCameras().then(devices => {
+            if (devices && devices.length) {
+              setCameras(devices);
+              // 가능하면 스마트폰 후면(Back/Environment) 카메라를 기본으로 선택
+              const backCam = devices.find(c => c.label.toLowerCase().includes('back') || c.label.toLowerCase().includes('후면'));
+              setSelectedCameraId(backCam ? backCam.id : devices[0].id);
+            }
+          }).catch(err => {
+            console.error(err);
+            setCameraError('카메라 접근 권한이 필요합니다. 브라우저 설정에서 허용해주세요.');
+          });
 
-          const scanner = new window.Html5QrcodeScanner("qr-reader", { 
-            fps: 10, 
-            qrbox: qrboxFunction,
-            aspectRatio: 1.0 
-          }, false);
-
-          const onScanSuccess = (decodedText) => {
-            const now = Date.now();
-            const last = lastScannedRef.current;
-            
-            // 3초 내 중복 스캔 방지
-            if (last && last.text === decodedText && (now - last.time < 3000)) return; 
-            lastScannedRef.current = { text: decodedText, time: now };
-
-            try {
-              const [studentId, studentName] = decodedText.split('|');
-              
-              // 올바르지 않은 QR 코드를 찍었을 때 처리
-              if (!studentId || !studentName) {
-                showScanMessage('error', '본 시스템용 출석 QR코드가 아닙니다.');
-                return;
-              }
-              
-              // 정상 스캔 시 삑 소리 재생 및 출석 처리
-              playBeep();
-              handleAttendance(studentId, studentName);
-            } catch {
-              showScanMessage('error', '잘못된 형식의 QR 코드입니다.');
+          // 다른 탭으로 이동할 때 카메라가 잠기는 현상(먹통) 방지 완벽 처리
+          return () => {
+            if (html5QrCodeRef.current && isScanningRef.current) {
+              html5QrCodeRef.current.stop().then(() => {
+                html5QrCodeRef.current.clear();
+              }).catch(console.error);
+            } else if (html5QrCodeRef.current) {
+              html5QrCodeRef.current.clear();
             }
           };
+        }, [scannerReady]);
 
-          scanner.render(onScanSuccess, () => {});
-          return () => scanner.clear().catch(console.error);
-        }, []);
+        const startScanning = () => {
+          if (!selectedCameraId) return;
+          setCameraError('');
+          
+          if (!html5QrCodeRef.current) {
+            html5QrCodeRef.current = new window.Html5Qrcode("qr-reader");
+          }
+
+          html5QrCodeRef.current.start(
+            selectedCameraId,
+            {
+              fps: 10,
+              qrbox: function(viewfinderWidth, viewfinderHeight) {
+                let minEdgePercentage = 0.7;
+                let minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
+                return { width: Math.floor(minEdgeSize * minEdgePercentage), height: Math.floor(minEdgeSize * minEdgePercentage) };
+              },
+              aspectRatio: 1.0
+            },
+            (decodedText) => {
+              const now = Date.now();
+              const last = lastScannedRef.current;
+              // 중복 스캔 방지 (3초)
+              if (last && last.text === decodedText && (now - last.time < 3000)) return; 
+              lastScannedRef.current = { text: decodedText, time: now };
+
+              try {
+                const [studentId, studentName] = decodedText.split('|');
+                if (!studentId || !studentName) {
+                  showScanMessage('error', '본 시스템용 출석 QR코드가 아닙니다.');
+                  return;
+                }
+                playBeep();
+                handleAttendance(studentId, studentName);
+              } catch {
+                showScanMessage('error', '잘못된 형식의 QR 코드입니다.');
+              }
+            },
+            (errorMessage) => {
+              // 스캔 중 발생하는 자잘한 프레임 에러는 무시합니다.
+            }
+          ).then(() => {
+            setIsScanning(true);
+            isScanningRef.current = true;
+          }).catch((err) => {
+            console.error("카메라 시작 에러:", err);
+            setCameraError('카메라를 시작할 수 없습니다. 다른 앱이 사용 중이거나 오류가 발생했습니다.');
+            setIsScanning(false);
+            isScanningRef.current = false;
+          });
+        };
+
+        const stopScanning = () => {
+          if (html5QrCodeRef.current && isScanningRef.current) {
+            html5QrCodeRef.current.stop().then(() => {
+              setIsScanning(false);
+              isScanningRef.current = false;
+              html5QrCodeRef.current.clear(); // 화면에 남은 마지막 프레임 삭제
+              html5QrCodeRef.current = null;  // 깨끗한 재시작을 위해 인스턴스 초기화
+            }).catch(console.error);
+          }
+        };
+
+        const handleCameraChange = (e) => {
+          setSelectedCameraId(e.target.value);
+        };
 
         const handleAttendance = (id, name) => {
           const now = new Date();
@@ -135,8 +187,8 @@
 
             const newLog = { logId: Date.now().toString(), timestamp: now, id, name, type: actionType, timeString };
 
-            if (webhookUrl) {
-              const url = `${webhookUrl}?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}&type=${encodeURIComponent(actionType)}`;
+            if (GOOGLE_SHEET_URL) {
+              const url = `${GOOGLE_SHEET_URL}?id=${encodeURIComponent(id)}&name=${encodeURIComponent(name)}&type=${encodeURIComponent(actionType)}`;
               fetch(url, { mode: 'no-cors' }).catch(err => console.error('구글시트 전송 실패', err));
             }
 
@@ -153,18 +205,60 @@
         return (
           <div className="flex flex-col items-center justify-center space-y-4">
             <h2 className="text-xl font-bold text-gray-800 mb-2">QR 출석 스캐너</h2>
+            
+            {/* 🛠 카메라 제어 UI (버그 방지의 핵심) */}
+            <div className="w-full max-w-md bg-white p-4 rounded-lg shadow-sm border border-gray-200 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-600 mb-1">장치 카메라 선택</label>
+                <select 
+                  value={selectedCameraId} 
+                  onChange={handleCameraChange}
+                  className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50"
+                  disabled={isScanning} // 스캔 중에는 카메라 변경을 막아 오류 방지
+                >
+                  {cameras.length === 0 && <option value="">카메라를 찾는 중입니다...</option>}
+                  {cameras.map(cam => (
+                    <option key={cam.id} value={cam.id}>{cam.label || `카메라 ${cam.id.substring(0, 5)}...`}</option>
+                  ))}
+                </select>
+                {isScanning && <p className="text-xs text-gray-400 mt-1">* 카메라를 변경하려면 먼저 [카메라 끄기]를 눌러주세요.</p>}
+              </div>
+              
+              <div className="flex gap-2">
+                {!isScanning ? (
+                  <button onClick={startScanning} disabled={!selectedCameraId} className="flex-1 bg-indigo-600 text-white py-3 rounded font-bold hover:bg-indigo-700 disabled:bg-gray-400 transition shadow-sm">
+                    카메라 켜기 (스캔 시작)
+                  </button>
+                ) : (
+                  <button onClick={stopScanning} className="flex-1 bg-red-500 text-white py-3 rounded font-bold hover:bg-red-600 transition shadow-sm">
+                    카메라 끄기 (오류 방지)
+                  </button>
+                )}
+              </div>
+              {cameraError && <p className="text-red-500 text-sm font-bold mt-2 text-center">{cameraError}</p>}
+            </div>
+
             {scanMessage && (
-              <div className={`px-6 py-4 rounded-lg shadow-lg text-white font-bold text-lg animate-bounce ${
+              <div className={`px-6 py-4 rounded-lg shadow-lg text-white font-bold text-lg animate-bounce w-full max-w-md text-center ${
                 scanMessage.type === 'success' ? 'bg-green-500' : scanMessage.type === 'info' ? 'bg-blue-500' : 'bg-red-500'
               }`}>
                 {scanMessage.text}
               </div>
             )}
-            <div id="qr-reader" className="w-full max-w-md overflow-hidden rounded-lg shadow-md bg-white border-2 border-gray-200"></div>
-            {webhookUrl ? (
+            
+            <div id="qr-reader" className="w-full max-w-md overflow-hidden rounded-lg shadow-md bg-white border-2 border-gray-200 min-h-[300px] flex items-center justify-center relative">
+              {!isScanning && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 text-gray-400 p-6 text-center">
+                  <span className="text-4xl mb-2">📷</span>
+                  <p>위의 <strong>[카메라 켜기]</strong> 버튼을 누르면<br/>렌즈가 작동합니다.</p>
+                </div>
+              )}
+            </div>
+            
+            {GOOGLE_SHEET_URL ? (
               <p className="text-green-600 font-medium flex items-center"><span className="mr-1">☁️</span> 구글 시트와 실시간 연동 중입니다.</p>
             ) : (
-              <p className="text-red-500 font-medium">환경설정에서 구글 시트를 연동하면 모든 교사가 실시간으로 볼 수 있습니다.</p>
+              <p className="text-red-500 font-medium text-sm">※ 코드에 구글 시트 주소가 입력되지 않았습니다.</p>
             )}
           </div>
         );
@@ -320,45 +414,61 @@
         );
       };
 
-      // --- 4. 환경설정 ---
-      const SettingsView = () => (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-          <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><span className="text-xl mr-2">⚙️</span> 구글 시트 웹앱 URL 연동</h2>
-          <p className="text-gray-600 mb-4 text-sm leading-relaxed">구글 앱스 스크립트 웹앱 URL을 입력하세요. 이후 스캔 기록이 교사 단톡방 등에서 실시간 공유 가능한 시트에 자동 기록됩니다.</p>
-          <input type="text" placeholder="https://script.google.com/macros/s/..." value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 mb-2" />
-          {webhookUrl && <p className="text-green-600 text-sm font-bold">✅ 연결 완료! 실시간 전송이 활성화되었습니다.</p>}
-        </div>
-      );
+      // 관리자 로그인/로그아웃 처리 함수
+      const handleAdminToggle = () => {
+        if (isAdmin) {
+          setIsAdmin(false); // 로그아웃
+          setActiveTab('scanner');
+        } else {
+          const pwd = prompt("교사 관리자 비밀번호를 입력하세요:");
+          if (pwd === ADMIN_PASSWORD) {
+            setIsAdmin(true); // 로그인 성공
+          } else if (pwd !== null) {
+            alert("비밀번호가 일치하지 않습니다.");
+          }
+        }
+      };
 
       return (
         <div className="min-h-screen bg-gray-100 font-sans text-gray-900 pb-10">
-          <header className="bg-indigo-600 text-white shadow-md">
+          <header className={`text-white shadow-md transition-colors duration-300 ${isAdmin ? 'bg-green-700' : 'bg-indigo-600'}`}>
             <div className="max-w-5xl mx-auto px-4 py-6 flex items-center justify-between">
-              <h1 className="text-2xl font-extrabold tracking-tight flex items-center"><span className="text-3xl mr-3">🔲</span> 야간자율학습 출석 시스템 Pro</h1>
+              <h1 
+                className="text-2xl font-extrabold tracking-tight flex items-center cursor-pointer select-none" 
+                onClick={handleAdminToggle}
+                title="여기를 클릭하면 관리자 로그인 창이 뜹니다"
+              >
+                <span className="text-3xl mr-3">{isAdmin ? '🔓' : '🔲'}</span> 
+                야간자율학습 출석 시스템 {isAdmin ? '(교사 관리 모드)' : ''}
+              </h1>
+              {!isAdmin && <p className="text-indigo-200 text-sm hidden sm:block">학생 스캔 전용 모드</p>}
             </div>
           </header>
 
           <main className="max-w-5xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-8">
-            <nav className="w-full md:w-64 flex-shrink-0 space-y-2">
-              {[
-                { id: 'scanner', icon: '📷', label: '출석 스캐너 (카메라)' },
-                { id: 'students', icon: '👥', label: '학생 관리 및 발급' },
-                { id: 'logs', icon: '🕒', label: '출석 기록 및 엑셀' },
-                { id: 'settings', icon: '⚙️', label: '클라우드 연동' }
-              ].map((tab) => (
-                <button 
-                  key={tab.id} onClick={() => setActiveTab(tab.id)}
-                  className={`w-full flex items-center p-4 rounded-lg transition-colors font-medium ${activeTab === tab.id ? 'bg-indigo-100 text-indigo-700 shadow-sm' : 'text-gray-600 hover:bg-gray-200'}`}
-                >
-                  <span className="text-xl mr-3">{tab.icon}</span> {tab.label}
-                </button>
-              ))}
-            </nav>
-            <section className="flex-1">
+            {/* 관리자로 로그인했을 때만 왼쪽 탭 메뉴가 보입니다 */}
+            {isAdmin && (
+              <nav className="w-full md:w-64 flex-shrink-0 space-y-2">
+                {[
+                  { id: 'scanner', icon: '📷', label: '출석 스캐너 (카메라)' },
+                  { id: 'students', icon: '👥', label: '학생 관리 및 발급' },
+                  { id: 'logs', icon: '🕒', label: '출석 기록 및 엑셀' }
+                ].map((tab) => (
+                  <button 
+                    key={tab.id} onClick={() => setActiveTab(tab.id)}
+                    className={`w-full flex items-center p-4 rounded-lg transition-colors font-medium ${activeTab === tab.id ? 'bg-green-100 text-green-800 shadow-sm' : 'text-gray-600 hover:bg-gray-200'}`}
+                  >
+                    <span className="text-xl mr-3">{tab.icon}</span> {tab.label}
+                  </button>
+                ))}
+              </nav>
+            )}
+            
+            {/* 학생 모드일 때는 스캐너가 화면 정중앙에 큼지막하게 배치됩니다 */}
+            <section className={`flex-1 transition-all ${!isAdmin ? 'max-w-xl mx-auto w-full' : ''}`}>
               {activeTab === 'scanner' && <ScannerView />}
-              {activeTab === 'students' && <StudentManagementView />}
-              {activeTab === 'logs' && <AttendanceLogView />}
-              {activeTab === 'settings' && <SettingsView />}
+              {activeTab === 'students' && isAdmin && <StudentManagementView />}
+              {activeTab === 'logs' && isAdmin && <AttendanceLogView />}
             </section>
           </main>
         </div>
