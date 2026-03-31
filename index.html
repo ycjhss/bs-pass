@@ -21,7 +21,7 @@
     // ⭐ [고정 연동 주소] 선생님의 구글 시트 웹앱 URL을 아래 따옴표 안에 붙여넣으세요!
     const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbyO9_bTUP1Q0xAt4D2pIv9aTAk0hmGdKyeMwdIy4wPErVkVnqP-bVQjruo8Cm7rnT-U/exec";
     // ⭐ [관리자 비밀번호] 교사 전용 메뉴에 들어갈 때 사용할 비밀번호입니다. (원하시는 번호로 수정하세요)
-    const ADMIN_PASSWORD = "1234";
+    const ADMIN_PASSWORD = "bshs0600";
 
     const { useState, useEffect, useRef } = React;
 
@@ -252,7 +252,6 @@
               </div>
             )}
             
-            {/* 오류 해결: React가 관리하는 요소와 html5-qrcode가 직접 조작하는 요소를 분리하여 React DOM 충돌 해결 */}
             <div className="relative w-full max-w-md overflow-hidden rounded-lg shadow-md bg-white border-2 border-gray-200 min-h-[300px] flex items-center justify-center">
               <div id="qr-reader" className="w-full"></div>
               
@@ -279,12 +278,47 @@
         const [filterGrade, setFilterGrade] = useState('all');
         const [filterClass, setFilterClass] = useState('all');
         const [searchQuery, setSearchQuery] = useState('');
+        const [cloudLogs, setCloudLogs] = useState([]);
+        const [isFetching, setIsFetching] = useState(false);
 
-        const filteredLogs = logs.filter(log => {
-          if (filterDate) {
-            const logDateStr = `${log.timestamp.getFullYear()}-${String(log.timestamp.getMonth() + 1).padStart(2, '0')}-${String(log.timestamp.getDate()).padStart(2, '0')}`;
-            if (logDateStr !== filterDate) return false;
+        const fetchLogsFromCloud = async () => {
+          if (!GOOGLE_SHEET_URL) return;
+          setIsFetching(true);
+          try {
+            const res = await fetch(`${GOOGLE_SHEET_URL}?action=getLogs`);
+            const text = await res.text();
+            // 만약 구글 시트 코드가 옛날 버전이라서 "성공"을 반환하면 에러 처리
+            if (text === "성공") {
+              throw new Error("앱스 스크립트가 아직 구버전입니다.");
+            }
+            const data = JSON.parse(text);
+            setCloudLogs(data);
+          } catch (e) {
+            console.error("Fetch error:", e);
+            alert("구글 시트 연동 오류: 교사 설정의 앱스 스크립트 코드가 최신(getLogs 지원)인지 확인해주세요.");
+          } finally {
+            setIsFetching(false);
           }
+        };
+
+        useEffect(() => {
+          if (GOOGLE_SHEET_URL) {
+            fetchLogsFromCloud();
+          }
+        }, []);
+
+        // 로컬 기록과 클라우드 기록의 포맷 통일
+        const normalizedLogs = GOOGLE_SHEET_URL ? cloudLogs : logs.map(l => ({
+           logId: l.logId,
+           date: `${l.timestamp.getFullYear()}-${String(l.timestamp.getMonth() + 1).padStart(2, '0')}-${String(l.timestamp.getDate()).padStart(2, '0')}`,
+           time: l.timeString,
+           id: l.id,
+           name: l.name,
+           type: l.type
+        }));
+
+        const filteredLogs = normalizedLogs.filter(log => {
+          if (filterDate && log.date !== filterDate) return false;
           let grade = '', classNum = '';
           if (log.id && log.id.length >= 4) {
              grade = log.id.substring(0, 1);
@@ -299,7 +333,7 @@
         const exportToCSV = () => {
           if (filteredLogs.length === 0) return alert('다운로드할 기록이 없습니다.');
           const headers = ['날짜', '시간', '학번', '이름', '상태'];
-          const csvRows = filteredLogs.map(log => `${log.timestamp.toLocaleDateString('ko-KR')},${log.timeString},${log.id},${log.name},${log.type}`);
+          const csvRows = filteredLogs.map(log => `${log.date},${log.time},${log.id},${log.name},${log.type}`);
           const csvContent = "\ufeff" + [headers.join(','), ...csvRows].join('\n');
           const link = document.createElement('a');
           link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
@@ -311,14 +345,32 @@
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
             <div className="p-4 bg-gray-50 border-b border-gray-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <h2 className="text-lg font-bold text-gray-800 flex items-center">
-                <span className="text-xl mr-2">🕒</span> 출석 기록 상세 조회
+                <span className="text-xl mr-2">🕒</span> 
+                {GOOGLE_SHEET_URL ? '클라우드 연동 출석 기록' : '기기 자체 출석 기록'}
               </h2>
-              <button onClick={exportToCSV} className="flex items-center bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-medium text-sm shadow-sm">
-                <span className="mr-2">📥</span> 현재 목록 엑셀 다운로드
-              </button>
+              <div className="flex gap-2 w-full md:w-auto">
+                {GOOGLE_SHEET_URL && (
+                  <button onClick={fetchLogsFromCloud} disabled={isFetching} className="flex items-center bg-blue-100 text-blue-700 px-4 py-2 rounded hover:bg-blue-200 transition font-medium text-sm shadow-sm">
+                    <span className="mr-2">{isFetching ? '⏳' : '🔄'}</span> 새로고침
+                  </button>
+                )}
+                <button onClick={exportToCSV} className="flex items-center bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-medium text-sm shadow-sm">
+                  <span className="mr-2">📥</span> 엑셀 다운로드
+                </button>
+              </div>
             </div>
             
-            <div className="p-4 border-b border-gray-200 bg-white grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            {/* 안내 메시지 변경: 클라우드 연동 상태 표시 */}
+            <div className={`mx-4 mt-4 p-4 border rounded-lg text-sm leading-relaxed shadow-sm ${GOOGLE_SHEET_URL ? 'bg-green-50 border-green-200 text-green-800' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
+              {GOOGLE_SHEET_URL ? (
+                <><strong className="text-green-900 text-base">✅ 구글 시트 데이터 실시간 연동 중</strong><br />구글 시트에 기록된 모든 출석 데이터가 이곳에 표시됩니다. 전체 조회가 가능합니다.</>
+              ) : (
+                <><strong className="text-blue-900 text-base">💡 다른 기기에서는 목록이 안 보이시나요?</strong><br />웹앱의 기록은 현재 스캐너 내부에만 임시 저장됩니다. 코드 상단에 구글 시트 주소를 넣으면 전체 기록이 연동됩니다.</>
+              )}
+            </div>
+            
+            {/* 필터 UI 유지 */}
+            <div className="p-4 border-b border-gray-200 bg-white grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-2">
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1 flex items-center"><span className="mr-1">📅</span> 날짜 선택</label>
                 <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-indigo-500" />
@@ -357,11 +409,11 @@
                 </thead>
                 <tbody>
                   {filteredLogs.length === 0 ? (
-                    <tr><td colSpan="4" className="p-8 text-center text-gray-500">조건에 맞는 출석 기록이 없습니다.</td></tr>
+                    <tr><td colSpan="4" className="p-8 text-center text-gray-500">조회된 기록이 없습니다.</td></tr>
                   ) : (
-                    filteredLogs.map(log => (
-                      <tr key={log.logId} className="hover:bg-gray-50 border-b border-gray-100 transition">
-                        <td className="p-4 text-gray-700 whitespace-nowrap">{log.timestamp.toLocaleDateString()} {log.timeString}</td>
+                    filteredLogs.map((log, idx) => (
+                      <tr key={log.logId || idx} className="hover:bg-gray-50 border-b border-gray-100 transition">
+                        <td className="p-4 text-gray-700 whitespace-nowrap">{log.date} {log.time}</td>
                         <td className="p-4 font-mono text-gray-600 whitespace-nowrap">{log.id}</td>
                         <td className="p-4 font-medium text-gray-900 whitespace-nowrap">{log.name}</td>
                         <td className="p-4 whitespace-nowrap">
@@ -383,6 +435,8 @@
       const StudentManagementView = () => {
         const [newId, setNewId] = useState('');
         const [newName, setNewName] = useState('');
+        const [isBulkMode, setIsBulkMode] = useState(false);
+        const [bulkData, setBulkData] = useState('');
 
         const addStudent = (e) => {
           e.preventDefault();
@@ -391,23 +445,134 @@
           setStudents([...students, { id: newId, name: newName }]);
           setNewId(''); setNewName('');
         };
+
+        const handleBulkAdd = () => {
+          if (!bulkData.trim()) return alert('데이터를 입력해주세요.');
+          const lines = bulkData.split('\n');
+          let newStudents = [...students];
+          let addedCount = 0;
+          let dupCount = 0;
+          
+          lines.forEach(line => {
+            // 공백, 탭, 쉼표 등으로 분리
+            const parts = line.trim().split(/[\s\t,]+/);
+            if (parts.length >= 2) {
+              const id = parts[0];
+              const name = parts[1];
+              if (!newStudents.find(s => s.id === id)) {
+                newStudents.push({ id, name });
+                addedCount++;
+              } else {
+                dupCount++;
+              }
+            }
+          });
+          setStudents(newStudents);
+          setBulkData('');
+          alert(`${addedCount}명의 학생이 추가되었습니다. (중복 제외 ${dupCount}명)`);
+          setIsBulkMode(false);
+        };
+
         const removeStudent = (id) => setStudents(students.filter(s => s.id !== id));
+
+        const exportQRsToCSV = () => {
+          if (students.length === 0) return alert('등록된 학생이 없습니다.');
+          const headers = ['학번', '이름', 'QR이미지(구글시트용)'];
+          const csvRows = students.map(s => {
+            const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(s.id + '|' + s.name)}`;
+            // 엑셀/구글시트에서 이미지가 바로 나오도록 IMAGE 함수 적용
+            return `${s.id},${s.name},=IMAGE("${url}")`;
+          });
+          const csvContent = "\ufeff" + [headers.join(','), ...csvRows].join('\n');
+          const link = document.createElement('a');
+          link.href = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8;' }));
+          link.download = `학생_QR코드_명렬표.csv`;
+          link.click();
+        };
+
+        const printQRs = () => {
+          if (students.length === 0) return alert('등록된 학생이 없습니다.');
+          const printWindow = window.open('', '_blank');
+          let html = `<html><head><title>학생 QR 일괄 인쇄</title>
+            <style>
+              body { font-family: sans-serif; text-align: center; }
+              .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; padding: 20px; }
+              .card { border: 1px dashed #999; padding: 15px; page-break-inside: avoid; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+              img { width: 120px; height: 120px; margin-bottom: 10px; }
+              h3 { margin: 0 0 5px 0; font-size: 18px; }
+              p { margin: 0; font-size: 14px; color: #555; }
+              @media print { .no-print { display: none; } }
+            </style>
+            </head><body>
+            <div class="no-print" style="margin-bottom: 20px;">
+               <button onclick="window.print()" style="padding: 10px 20px; font-size: 16px; cursor: pointer; background: #4f46e5; color: white; border: none; border-radius: 5px;">인쇄하기 / PDF 저장</button>
+               <p style="margin-top: 10px; color: #666;">※ 프린터 설정에서 '배경 그래픽 인쇄'를 켜주세요.</p>
+            </div>
+            <div class="grid">`;
+          students.forEach(s => {
+            const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(s.id + '|' + s.name)}`;
+            html += `<div class="card"><img src="${url}" /><h3>${s.name}</h3><p>${s.id}</p></div>`;
+          });
+          html += '</div></body></html>';
+          printWindow.document.write(html);
+          printWindow.document.close();
+        };
 
         return (
           <div className="space-y-6">
             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-              <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center">
-                <span className="text-xl mr-2">👤</span> 개별 학생 등록 및 QR 생성
-              </h2>
-              <form onSubmit={addStudent} className="flex gap-4">
-                <input type="text" placeholder="학번 (예: 10101)" value={newId} onChange={(e) => setNewId(e.target.value)} className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500" />
-                <input type="text" placeholder="이름 (예: 홍길동)" value={newName} onChange={(e) => setNewName(e.target.value)} className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500" />
-                <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 font-medium">등록 및 발급</button>
-              </form>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center">
+                  <span className="text-xl mr-2">👤</span> 
+                  {isBulkMode ? '학생 일괄 등록' : '개별 학생 등록'}
+                </h2>
+                <button 
+                  onClick={() => setIsBulkMode(!isBulkMode)}
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-800 underline"
+                >
+                  {isBulkMode ? '개별 등록으로 전환' : '일괄 등록으로 전환'}
+                </button>
+              </div>
+              
+              {!isBulkMode ? (
+                <form onSubmit={addStudent} className="flex gap-4">
+                  <input type="text" placeholder="학번 (예: 10101)" value={newId} onChange={(e) => setNewId(e.target.value)} className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500" />
+                  <input type="text" placeholder="이름 (예: 홍길동)" value={newName} onChange={(e) => setNewName(e.target.value)} className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500" />
+                  <button type="submit" className="bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 font-medium whitespace-nowrap">등록</button>
+                </form>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <div className="bg-gray-50 p-3 rounded text-sm text-gray-600 border border-gray-200">
+                    <p>엑셀 명렬표에서 <strong>[학번]</strong>과 <strong>[이름]</strong> 열을 드래그해서 복사한 후 아래 빈칸에 붙여넣기 하세요.</p>
+                  </div>
+                  <textarea 
+                    placeholder={"10101 홍길동\n10102 김철수"}
+                    value={bulkData}
+                    onChange={(e) => setBulkData(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded focus:ring-2 focus:ring-indigo-500 h-32 outline-none font-mono text-sm"
+                  />
+                  <button onClick={handleBulkAdd} className="bg-indigo-600 text-white px-6 py-3 rounded hover:bg-indigo-700 font-bold transition">
+                    위 목록으로 일괄 등록하기
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-              <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center"><span className="text-xl mr-2">🔲</span> 학생 QR 코드 목록</h2>
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 gap-4">
+                <h2 className="text-lg font-bold text-gray-800 flex items-center">
+                  <span className="text-xl mr-2">🔲</span> 학생 QR 코드 목록 ({students.length}명)
+                </h2>
+                <div className="flex gap-2 w-full md:w-auto">
+                  <button onClick={printQRs} className="flex-1 md:flex-none flex justify-center items-center bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition font-medium text-sm shadow-sm">
+                    <span className="mr-2">🖨️</span> QR 일괄 인쇄
+                  </button>
+                  <button onClick={exportQRsToCSV} className="flex-1 md:flex-none flex justify-center items-center bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-medium text-sm shadow-sm">
+                    <span className="mr-2">📥</span> QR 엑셀 다운로드
+                  </button>
+                </div>
+              </div>
+              
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {students.map(student => (
                   <div key={student.id} className="border border-gray-200 rounded-lg p-4 flex flex-col items-center bg-gray-50 relative hover:shadow-md transition">
@@ -418,6 +583,9 @@
                   </div>
                 ))}
               </div>
+              {students.length === 0 && (
+                <div className="text-center text-gray-500 py-10 bg-gray-50 border border-dashed rounded">등록된 학생이 없습니다.</div>
+              )}
             </div>
           </div>
         );
@@ -499,7 +667,7 @@
                 {[
                   { id: 'scanner', icon: '📷', label: '출석 스캐너 (카메라)' },
                   { id: 'students', icon: '👥', label: '학생 관리 및 발급' },
-                  { id: 'logs', icon: '🕒', label: '출석 기록 및 엑셀' }
+                  { id: 'logs', icon: '🕒', label: '기기 자체 기록 확인' }
                 ].map((tab) => (
                   <button 
                     key={tab.id} onClick={() => setActiveTab(tab.id)}
