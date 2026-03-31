@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>야간자율학습 출석 시스템</title>
   
-  <!-- 라이브러리 불러오기 (Tailwind, HTML5-QRCode, React, Babel) -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/html5-qrcode"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -16,20 +15,19 @@
   
   <div id="root"></div>
 
-  <!-- React 앱 코드 -->
   <script type="text/babel">
-    // ⭐ [고정 연동 주소] 선생님의 구글 시트 웹앱 URL을 아래 따옴표 안에 붙여넣으세요!
+    // ⭐ [고정 연동 주소]
     const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbyO9_bTUP1Q0xAt4D2pIv9aTAk0hmGdKyeMwdIy4wPErVkVnqP-bVQjruo8Cm7rnT-U/exec";
-    // ⭐ [관리자 비밀번호] 교사 전용 메뉴에 들어갈 때 사용할 비밀번호입니다. (원하시는 번호로 수정하세요)
-    const ADMIN_PASSWORD = "bshs0600";
+    // ⭐ [관리자 비밀번호]
+    const ADMIN_PASSWORD = "1234";
 
     const { useState, useEffect, useRef } = React;
 
     function App() {
-      const [isAdmin, setIsAdmin] = useState(false); // 관리자 모드 (숨김 해제 상태)
-      const [showLoginModal, setShowLoginModal] = useState(false); // 로그인 팝업 창 상태
-      const [passwordInput, setPasswordInput] = useState(''); // 비밀번호 입력값
-      const [loginError, setLoginError] = useState(''); // 로그인 오류 메시지
+      const [isAdmin, setIsAdmin] = useState(false);
+      const [showLoginModal, setShowLoginModal] = useState(false);
+      const [passwordInput, setPasswordInput] = useState('');
+      const [loginError, setLoginError] = useState('');
       const [activeTab, setActiveTab] = useState('scanner');
       const [scannerReady, setScannerReady] = useState(false);
       
@@ -53,14 +51,13 @@
         setScannerReady(true);
       }, []);
 
-      // --- 1. 스캐너 컴포넌트 (카메라 켜짐 오류 완벽 해결) ---
+      // --- 1. 스캐너 컴포넌트 ---
       const ScannerView = () => {
         const lastScannedRef = useRef(null);
         const html5QrCodeRef = useRef(null);
         const isScanningRef = useRef(false); 
         
         const [cameras, setCameras] = useState([]);
-        // 기본값을 'environment'(후면 카메라 자동선택)로 지정하여 오류 최소화
         const [selectedCameraId, setSelectedCameraId] = useState('environment'); 
         const [isScanning, setIsScanning] = useState(false);
         const [cameraError, setCameraError] = useState('');
@@ -85,17 +82,7 @@
         };
 
         useEffect(() => {
-          if (!scannerReady) return;
-          
-          window.Html5Qrcode.getCameras().then(devices => {
-            if (devices && devices.length) {
-              setCameras(devices);
-              // 기기 목록은 참고용으로 띄워두되, 기본 선택은 'environment' 유지
-            }
-          }).catch(err => {
-            console.log("카메라 권한 대기 중입니다.");
-          });
-
+          // 🚨 수정됨: 페이지 접속 시 카메라 권한을 묻는 코드를 제거했습니다. (관리자 로그인 방해 방지)
           return () => {
             if (html5QrCodeRef.current && isScanningRef.current) {
               html5QrCodeRef.current.stop().then(() => {
@@ -103,7 +90,7 @@
               }).catch(console.error);
             }
           };
-        }, [scannerReady]);
+        }, []);
 
         const startScanning = () => {
           setCameraError('');
@@ -112,7 +99,6 @@
             html5QrCodeRef.current = new window.Html5Qrcode("qr-reader");
           }
 
-          // environment(후면) 또는 user(전면)일 경우 객체 형태로 전달, 그 외엔 특정 카메라 ID 문자열 전달
           const cameraConfig = (selectedCameraId === 'environment' || selectedCameraId === 'user') 
             ? { facingMode: selectedCameraId } 
             : selectedCameraId;
@@ -125,7 +111,6 @@
                 let minEdgePercentage = 0.7;
                 let minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
                 let size = Math.floor(minEdgeSize * minEdgePercentage);
-                // 오류 해결: qrbox 최소 크기를 50px로 강제 설정하여 html5-qrcode 에러 방지
                 if (size < 50) size = 50; 
                 return { width: size, height: size };
               },
@@ -149,16 +134,19 @@
                 showScanMessage('error', '잘못된 형식의 QR 코드입니다.');
               }
             },
-            (errorMessage) => {
-              // 프레임 인식 실패 메시지는 무시
-            }
+            (errorMessage) => {}
           ).then(() => {
             setIsScanning(true);
             isScanningRef.current = true;
+            
+            // 🚨 수정됨: 카메라가 정상적으로 켜진 '이후에만' 카메라 목록을 불러와서 세팅합니다. (오류 방지)
+            window.Html5Qrcode.getCameras().then(devices => {
+              if (devices && devices.length) setCameras(devices);
+            }).catch(e => console.log(e));
+
           }).catch((err) => {
             console.error("카메라 시작 에러:", err);
-            // 안 켜지는 정확한 이유를 화면에 출력
-            setCameraError(`카메라 실행 실패: 브라우저 설정에서 카메라 '허용'이 되어있는지 확인해주세요. (에러내용: ${err.message || err})`);
+            setCameraError(`카메라 실행 실패: 브라우저 설정에서 카메라 '허용'이 되어있는지 확인해주세요.`);
             setIsScanning(false);
             isScanningRef.current = false;
           });
@@ -208,7 +196,7 @@
           <div className="flex flex-col items-center justify-center space-y-4">
             <h2 className="text-xl font-bold text-gray-800 mb-2">QR 출석 스캐너</h2>
             
-            <div className="w-full max-w-md bg-white p-4 rounded-lg shadow-sm border border-gray-200 space-y-3">
+            <div className="w-full max-w-md bg-white p-4 rounded-lg shadow-sm border border-gray-200 space-y-3 relative z-10">
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1">장치 카메라 선택</label>
                 <select 
@@ -287,27 +275,21 @@
           try {
             const res = await fetch(`${GOOGLE_SHEET_URL}?action=getLogs`);
             const text = await res.text();
-            // 만약 구글 시트 코드가 옛날 버전이라서 "성공"을 반환하면 에러 처리
-            if (text === "성공") {
-              throw new Error("앱스 스크립트가 아직 구버전입니다.");
-            }
+            if (text === "성공") throw new Error("앱스 스크립트가 구버전입니다.");
             const data = JSON.parse(text);
             setCloudLogs(data);
           } catch (e) {
             console.error("Fetch error:", e);
-            alert("구글 시트 연동 오류: 교사 설정의 앱스 스크립트 코드가 최신(getLogs 지원)인지 확인해주세요.");
+            alert("구글 시트 연동 오류: 앱스 스크립트 코드가 최신인지 확인해주세요.");
           } finally {
             setIsFetching(false);
           }
         };
 
         useEffect(() => {
-          if (GOOGLE_SHEET_URL) {
-            fetchLogsFromCloud();
-          }
+          if (GOOGLE_SHEET_URL) fetchLogsFromCloud();
         }, []);
 
-        // 로컬 기록과 클라우드 기록의 포맷 통일
         const normalizedLogs = GOOGLE_SHEET_URL ? cloudLogs : logs.map(l => ({
            logId: l.logId,
            date: `${l.timestamp.getFullYear()}-${String(l.timestamp.getMonth() + 1).padStart(2, '0')}-${String(l.timestamp.getDate()).padStart(2, '0')}`,
@@ -360,16 +342,14 @@
               </div>
             </div>
             
-            {/* 안내 메시지 변경: 클라우드 연동 상태 표시 */}
             <div className={`mx-4 mt-4 p-4 border rounded-lg text-sm leading-relaxed shadow-sm ${GOOGLE_SHEET_URL ? 'bg-green-50 border-green-200 text-green-800' : 'bg-blue-50 border-blue-200 text-blue-800'}`}>
               {GOOGLE_SHEET_URL ? (
-                <><strong className="text-green-900 text-base">✅ 구글 시트 데이터 실시간 연동 중</strong><br />구글 시트에 기록된 모든 출석 데이터가 이곳에 표시됩니다. 전체 조회가 가능합니다.</>
+                <><strong className="text-green-900 text-base">✅ 구글 시트 데이터 실시간 연동 중</strong><br />구글 시트에 기록된 모든 출석 데이터가 이곳에 표시됩니다.</>
               ) : (
-                <><strong className="text-blue-900 text-base">💡 다른 기기에서는 목록이 안 보이시나요?</strong><br />웹앱의 기록은 현재 스캐너 내부에만 임시 저장됩니다. 코드 상단에 구글 시트 주소를 넣으면 전체 기록이 연동됩니다.</>
+                <><strong className="text-blue-900 text-base">💡 다른 기기에서는 목록이 안 보이시나요?</strong><br />코드 상단에 구글 시트 주소를 넣으면 전체 기록이 연동됩니다.</>
               )}
             </div>
             
-            {/* 필터 UI 유지 */}
             <div className="p-4 border-b border-gray-200 bg-white grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mt-2">
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1 flex items-center"><span className="mr-1">📅</span> 날짜 선택</label>
@@ -454,7 +434,6 @@
           let dupCount = 0;
           
           lines.forEach(line => {
-            // 공백, 탭, 쉼표 등으로 분리
             const parts = line.trim().split(/[\s\t,]+/);
             if (parts.length >= 2) {
               const id = parts[0];
@@ -480,7 +459,6 @@
           const headers = ['학번', '이름', 'QR이미지(구글시트용)'];
           const csvRows = students.map(s => {
             const url = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(s.id + '|' + s.name)}`;
-            // 엑셀/구글시트에서 이미지가 바로 나오도록 IMAGE 함수 적용
             return `${s.id},${s.name},=IMAGE("${url}")`;
           });
           const csvContent = "\ufeff" + [headers.join(','), ...csvRows].join('\n');
@@ -565,10 +543,10 @@
                 </h2>
                 <div className="flex gap-2 w-full md:w-auto">
                   <button onClick={printQRs} className="flex-1 md:flex-none flex justify-center items-center bg-gray-800 text-white px-4 py-2 rounded hover:bg-gray-900 transition font-medium text-sm shadow-sm">
-                    <span className="mr-2">🖨️</span> QR 일괄 인쇄
+                    <span className="mr-2">🖨️</span> 일괄 인쇄
                   </button>
                   <button onClick={exportQRsToCSV} className="flex-1 md:flex-none flex justify-center items-center bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition font-medium text-sm shadow-sm">
-                    <span className="mr-2">📥</span> QR 엑셀 다운로드
+                    <span className="mr-2">📥</span> 엑셀 다운로드
                   </button>
                 </div>
               </div>
@@ -591,13 +569,11 @@
         );
       };
 
-      // 관리자 로그인/로그아웃 처리 함수
       const handleAdminToggle = () => {
         if (isAdmin) {
-          setIsAdmin(false); // 로그아웃
+          setIsAdmin(false); 
           setActiveTab('scanner');
         } else {
-          // 브라우저 기본 창 대신 예쁜 자체 모달창 띄우기
           setShowLoginModal(true);
           setPasswordInput('');
           setLoginError('');
@@ -617,9 +593,8 @@
       return (
         <div className="min-h-screen bg-gray-100 font-sans text-gray-900 pb-10">
           
-          {/* 🔒 관리자 로그인 모달 창 */}
           {showLoginModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] px-4">
               <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-sm">
                 <h3 className="text-lg font-bold mb-4 flex items-center">
                   <span className="text-xl mr-2">🔒</span> 교사 관리자 로그인
@@ -646,28 +621,27 @@
             </div>
           )}
 
-          <header className={`text-white shadow-md transition-colors duration-300 ${isAdmin ? 'bg-green-700' : 'bg-indigo-600'}`}>
+          {/* 🚨 수정됨: z-50을 부여하여 어떤 상황에서도 타이틀 터치가 막히지 않도록 강제 적용 */}
+          <header className={`relative z-50 text-white shadow-md transition-colors duration-300 ${isAdmin ? 'bg-green-700' : 'bg-indigo-600'}`}>
             <div className="max-w-5xl mx-auto px-4 py-6 flex items-center justify-between">
               <h1 
-                className="text-2xl font-extrabold tracking-tight flex items-center cursor-pointer select-none" 
+                className="text-2xl font-extrabold tracking-tight flex items-center cursor-pointer select-none w-full sm:w-auto" 
                 onClick={handleAdminToggle}
-                title="여기를 클릭하면 관리자 로그인 창이 뜹니다"
               >
                 <span className="text-3xl mr-3">{isAdmin ? '🔓' : '🔲'}</span> 
-                야간자율학습 출석 시스템 {isAdmin ? '(교사 관리 모드)' : ''}
+                야간자율학습 출석 시스템
               </h1>
               {!isAdmin && <p className="text-indigo-200 text-sm hidden sm:block">학생 스캔 전용 모드</p>}
             </div>
           </header>
 
-          <main className="max-w-5xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-8">
-            {/* 관리자로 로그인했을 때만 왼쪽 탭 메뉴가 보입니다 */}
+          <main className="max-w-5xl mx-auto px-4 py-8 flex flex-col md:flex-row gap-8 relative z-0">
             {isAdmin && (
               <nav className="w-full md:w-64 flex-shrink-0 space-y-2">
                 {[
                   { id: 'scanner', icon: '📷', label: '출석 스캐너 (카메라)' },
                   { id: 'students', icon: '👥', label: '학생 관리 및 발급' },
-                  { id: 'logs', icon: '🕒', label: '기기 자체 기록 확인' }
+                  { id: 'logs', icon: '🕒', label: '출석 기록 및 엑셀' }
                 ].map((tab) => (
                   <button 
                     key={tab.id} onClick={() => setActiveTab(tab.id)}
@@ -679,7 +653,6 @@
               </nav>
             )}
             
-            {/* 학생 모드일 때는 스캐너가 화면 정중앙에 큼지막하게 배치됩니다 */}
             <section className={`flex-1 transition-all ${!isAdmin ? 'max-w-xl mx-auto w-full' : ''}`}>
               {activeTab === 'scanner' && <ScannerView />}
               {activeTab === 'students' && isAdmin && <StudentManagementView />}
