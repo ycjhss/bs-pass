@@ -58,9 +58,42 @@
       const ScannerView = () => {
         const lastScannedRef = useRef(null); // 무한 렌더링 방지를 위해 useRef 사용
 
+        // 삑 소리 재생 함수 (웹 오디오 API 활용)
+        const playBeep = () => {
+          try {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            const ctx = new AudioContext();
+            const osc = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(880, ctx.currentTime); // 880Hz (높은 음)
+            gainNode.gain.setValueAtTime(0.1, ctx.currentTime); // 볼륨 조절
+            osc.start();
+            osc.stop(ctx.currentTime + 0.1); // 0.1초 동안 재생
+          } catch (e) {
+            console.log("오디오 재생을 지원하지 않는 기기입니다.");
+          }
+        };
+
         useEffect(() => {
           if (!scannerReady) return;
-          const scanner = new window.Html5QrcodeScanner("qr-reader", { fps: 10, qrbox: { width: 250, height: 250 } }, false);
+          
+          // 반응형 스캐너 크기 설정 (모바일 화면 짤림 방지)
+          const qrboxFunction = function(viewfinderWidth, viewfinderHeight) {
+            let minEdgePercentage = 0.7; // 화면의 70% 크기
+            let minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
+            let qrboxSize = Math.floor(minEdgeSize * minEdgePercentage);
+            return { width: qrboxSize, height: qrboxSize };
+          };
+
+          const scanner = new window.Html5QrcodeScanner("qr-reader", { 
+            fps: 10, 
+            qrbox: qrboxFunction,
+            aspectRatio: 1.0 
+          }, false);
 
           const onScanSuccess = (decodedText) => {
             const now = Date.now();
@@ -72,10 +105,18 @@
 
             try {
               const [studentId, studentName] = decodedText.split('|');
-              if (!studentId || !studentName) throw new Error();
+              
+              // 올바르지 않은 QR 코드를 찍었을 때 처리
+              if (!studentId || !studentName) {
+                showScanMessage('error', '본 시스템용 출석 QR코드가 아닙니다.');
+                return;
+              }
+              
+              // 정상 스캔 시 삑 소리 재생 및 출석 처리
+              playBeep();
               handleAttendance(studentId, studentName);
             } catch {
-              showScanMessage('error', '잘못된 QR 코드입니다.');
+              showScanMessage('error', '잘못된 형식의 QR 코드입니다.');
             }
           };
 
