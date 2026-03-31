@@ -27,6 +27,9 @@
 
     function App() {
       const [isAdmin, setIsAdmin] = useState(false); // 관리자 모드 (숨김 해제 상태)
+      const [showLoginModal, setShowLoginModal] = useState(false); // 로그인 팝업 창 상태
+      const [passwordInput, setPasswordInput] = useState(''); // 비밀번호 입력값
+      const [loginError, setLoginError] = useState(''); // 로그인 오류 메시지
       const [activeTab, setActiveTab] = useState('scanner');
       const [scannerReady, setScannerReady] = useState(false);
       
@@ -420,17 +423,55 @@
           setIsAdmin(false); // 로그아웃
           setActiveTab('scanner');
         } else {
-          const pwd = prompt("교사 관리자 비밀번호를 입력하세요:");
-          if (pwd === ADMIN_PASSWORD) {
-            setIsAdmin(true); // 로그인 성공
-          } else if (pwd !== null) {
-            alert("비밀번호가 일치하지 않습니다.");
-          }
+          // 브라우저 기본 창 대신 예쁜 자체 모달창 띄우기
+          setShowLoginModal(true);
+          setPasswordInput('');
+          setLoginError('');
+        }
+      };
+
+      const handleLoginSubmit = () => {
+        if (passwordInput === ADMIN_PASSWORD) {
+          setIsAdmin(true);
+          setShowLoginModal(false);
+          setPasswordInput('');
+        } else {
+          setLoginError('비밀번호가 일치하지 않습니다.');
         }
       };
 
       return (
         <div className="min-h-screen bg-gray-100 font-sans text-gray-900 pb-10">
+          
+          {/* 🔒 관리자 로그인 모달 창 */}
+          {showLoginModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+              <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-sm">
+                <h3 className="text-lg font-bold mb-4 flex items-center">
+                  <span className="text-xl mr-2">🔒</span> 교사 관리자 로그인
+                </h3>
+                <input 
+                  type="password" 
+                  value={passwordInput}
+                  onChange={e => setPasswordInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLoginSubmit()}
+                  className="w-full p-3 border border-gray-300 rounded mb-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="비밀번호 입력 (기본: 1234)"
+                  autoFocus
+                />
+                {loginError && <p className="text-red-500 text-sm mb-4 font-bold">{loginError}</p>}
+                <div className="flex justify-end gap-2 mt-4">
+                  <button onClick={() => setShowLoginModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded font-medium transition">
+                    취소
+                  </button>
+                  <button onClick={handleLoginSubmit} className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium transition">
+                    확인
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <header className={`text-white shadow-md transition-colors duration-300 ${isAdmin ? 'bg-green-700' : 'bg-indigo-600'}`}>
             <div className="max-w-5xl mx-auto px-4 py-6 flex items-center justify-between">
               <h1 
