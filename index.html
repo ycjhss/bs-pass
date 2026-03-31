@@ -99,10 +99,8 @@
           return () => {
             if (html5QrCodeRef.current && isScanningRef.current) {
               html5QrCodeRef.current.stop().then(() => {
-                html5QrCodeRef.current.clear();
+                if (html5QrCodeRef.current) html5QrCodeRef.current.clear();
               }).catch(console.error);
-            } else if (html5QrCodeRef.current) {
-              html5QrCodeRef.current.clear();
             }
           };
         }, [scannerReady]);
@@ -126,7 +124,10 @@
               qrbox: function(viewfinderWidth, viewfinderHeight) {
                 let minEdgePercentage = 0.7;
                 let minEdgeSize = Math.min(viewfinderWidth, viewfinderHeight);
-                return { width: Math.floor(minEdgeSize * minEdgePercentage), height: Math.floor(minEdgeSize * minEdgePercentage) };
+                let size = Math.floor(minEdgeSize * minEdgePercentage);
+                // 오류 해결: qrbox 최소 크기를 50px로 강제 설정하여 html5-qrcode 에러 방지
+                if (size < 50) size = 50; 
+                return { width: size, height: size };
               },
               aspectRatio: 1.0
             },
@@ -168,8 +169,7 @@
             html5QrCodeRef.current.stop().then(() => {
               setIsScanning(false);
               isScanningRef.current = false;
-              html5QrCodeRef.current.clear(); 
-              // null로 초기화하지 않고 재사용을 위해 남겨둠 (먹통 방지 핵심)
+              if (html5QrCodeRef.current) html5QrCodeRef.current.clear(); 
             }).catch(console.error);
           }
         };
@@ -245,16 +245,19 @@
             </div>
 
             {scanMessage && (
-              <div className={`px-6 py-4 rounded-lg shadow-lg text-white font-bold text-lg animate-bounce w-full max-w-md text-center ${
+              <div className={`px-6 py-4 rounded-lg shadow-lg text-white font-bold text-lg animate-bounce w-full max-w-md text-center z-50 ${
                 scanMessage.type === 'success' ? 'bg-green-500' : scanMessage.type === 'info' ? 'bg-blue-500' : 'bg-red-500'
               }`}>
                 {scanMessage.text}
               </div>
             )}
             
-            <div id="qr-reader" className="w-full max-w-md overflow-hidden rounded-lg shadow-md bg-white border-2 border-gray-200 min-h-[300px] flex items-center justify-center relative">
+            {/* 오류 해결: React가 관리하는 요소와 html5-qrcode가 직접 조작하는 요소를 분리하여 React DOM 충돌 해결 */}
+            <div className="relative w-full max-w-md overflow-hidden rounded-lg shadow-md bg-white border-2 border-gray-200 min-h-[300px] flex items-center justify-center">
+              <div id="qr-reader" className="w-full"></div>
+              
               {!isScanning && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 text-gray-400 p-6 text-center">
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 text-gray-400 p-6 text-center z-10 pointer-events-none">
                   <span className="text-4xl mb-2">📷</span>
                   <p>위의 <strong>[카메라 켜기]</strong> 버튼을 누르면<br/>렌즈가 작동합니다.</p>
                 </div>
