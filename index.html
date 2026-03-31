@@ -53,18 +53,18 @@
         setScannerReady(true);
       }, []);
 
-      // --- 1. 스캐너 컴포넌트 (오류 해결을 위해 전면 개편) ---
+      // --- 1. 스캐너 컴포넌트 (카메라 켜짐 오류 완벽 해결) ---
       const ScannerView = () => {
         const lastScannedRef = useRef(null);
         const html5QrCodeRef = useRef(null);
-        const isScanningRef = useRef(false); // 컴포넌트 언마운트 시 안전한 종료를 위한 참조
+        const isScanningRef = useRef(false); 
         
         const [cameras, setCameras] = useState([]);
-        const [selectedCameraId, setSelectedCameraId] = useState('');
+        // 기본값을 'environment'(후면 카메라 자동선택)로 지정하여 오류 최소화
+        const [selectedCameraId, setSelectedCameraId] = useState('environment'); 
         const [isScanning, setIsScanning] = useState(false);
         const [cameraError, setCameraError] = useState('');
 
-        // 삑 소리 재생 함수
         const playBeep = () => {
           try {
             const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -84,23 +84,18 @@
           }
         };
 
-        // 기기에 연결된 카메라 목록 가져오기
         useEffect(() => {
           if (!scannerReady) return;
           
           window.Html5Qrcode.getCameras().then(devices => {
             if (devices && devices.length) {
               setCameras(devices);
-              // 가능하면 스마트폰 후면(Back/Environment) 카메라를 기본으로 선택
-              const backCam = devices.find(c => c.label.toLowerCase().includes('back') || c.label.toLowerCase().includes('후면'));
-              setSelectedCameraId(backCam ? backCam.id : devices[0].id);
+              // 기기 목록은 참고용으로 띄워두되, 기본 선택은 'environment' 유지
             }
           }).catch(err => {
-            console.error(err);
-            setCameraError('카메라 접근 권한이 필요합니다. 브라우저 설정에서 허용해주세요.');
+            console.log("카메라 권한 대기 중입니다.");
           });
 
-          // 다른 탭으로 이동할 때 카메라가 잠기는 현상(먹통) 방지 완벽 처리
           return () => {
             if (html5QrCodeRef.current && isScanningRef.current) {
               html5QrCodeRef.current.stop().then(() => {
@@ -113,15 +108,19 @@
         }, [scannerReady]);
 
         const startScanning = () => {
-          if (!selectedCameraId) return;
           setCameraError('');
           
           if (!html5QrCodeRef.current) {
             html5QrCodeRef.current = new window.Html5Qrcode("qr-reader");
           }
 
+          // environment(후면) 또는 user(전면)일 경우 객체 형태로 전달, 그 외엔 특정 카메라 ID 문자열 전달
+          const cameraConfig = (selectedCameraId === 'environment' || selectedCameraId === 'user') 
+            ? { facingMode: selectedCameraId } 
+            : selectedCameraId;
+
           html5QrCodeRef.current.start(
-            selectedCameraId,
+            cameraConfig,
             {
               fps: 10,
               qrbox: function(viewfinderWidth, viewfinderHeight) {
@@ -134,7 +133,6 @@
             (decodedText) => {
               const now = Date.now();
               const last = lastScannedRef.current;
-              // 중복 스캔 방지 (3초)
               if (last && last.text === decodedText && (now - last.time < 3000)) return; 
               lastScannedRef.current = { text: decodedText, time: now };
 
@@ -151,14 +149,15 @@
               }
             },
             (errorMessage) => {
-              // 스캔 중 발생하는 자잘한 프레임 에러는 무시합니다.
+              // 프레임 인식 실패 메시지는 무시
             }
           ).then(() => {
             setIsScanning(true);
             isScanningRef.current = true;
           }).catch((err) => {
             console.error("카메라 시작 에러:", err);
-            setCameraError('카메라를 시작할 수 없습니다. 다른 앱이 사용 중이거나 오류가 발생했습니다.');
+            // 안 켜지는 정확한 이유를 화면에 출력
+            setCameraError(`카메라 실행 실패: 브라우저 설정에서 카메라 '허용'이 되어있는지 확인해주세요. (에러내용: ${err.message || err})`);
             setIsScanning(false);
             isScanningRef.current = false;
           });
@@ -169,8 +168,8 @@
             html5QrCodeRef.current.stop().then(() => {
               setIsScanning(false);
               isScanningRef.current = false;
-              html5QrCodeRef.current.clear(); // 화면에 남은 마지막 프레임 삭제
-              html5QrCodeRef.current = null;  // 깨끗한 재시작을 위해 인스턴스 초기화
+              html5QrCodeRef.current.clear(); 
+              // null로 초기화하지 않고 재사용을 위해 남겨둠 (먹통 방지 핵심)
             }).catch(console.error);
           }
         };
@@ -209,7 +208,6 @@
           <div className="flex flex-col items-center justify-center space-y-4">
             <h2 className="text-xl font-bold text-gray-800 mb-2">QR 출석 스캐너</h2>
             
-            {/* 🛠 카메라 제어 UI (버그 방지의 핵심) */}
             <div className="w-full max-w-md bg-white p-4 rounded-lg shadow-sm border border-gray-200 space-y-3">
               <div>
                 <label className="block text-xs font-bold text-gray-600 mb-1">장치 카메라 선택</label>
@@ -217,9 +215,10 @@
                   value={selectedCameraId} 
                   onChange={handleCameraChange}
                   className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-indigo-500 bg-gray-50"
-                  disabled={isScanning} // 스캔 중에는 카메라 변경을 막아 오류 방지
+                  disabled={isScanning}
                 >
-                  {cameras.length === 0 && <option value="">카메라를 찾는 중입니다...</option>}
+                  <option value="environment">자동 선택 (후면 카메라 권장)</option>
+                  <option value="user">자동 선택 (전면/노트북 웹캠)</option>
                   {cameras.map(cam => (
                     <option key={cam.id} value={cam.id}>{cam.label || `카메라 ${cam.id.substring(0, 5)}...`}</option>
                   ))}
@@ -229,7 +228,7 @@
               
               <div className="flex gap-2">
                 {!isScanning ? (
-                  <button onClick={startScanning} disabled={!selectedCameraId} className="flex-1 bg-indigo-600 text-white py-3 rounded font-bold hover:bg-indigo-700 disabled:bg-gray-400 transition shadow-sm">
+                  <button onClick={startScanning} className="flex-1 bg-indigo-600 text-white py-3 rounded font-bold hover:bg-indigo-700 transition shadow-sm">
                     카메라 켜기 (스캔 시작)
                   </button>
                 ) : (
@@ -238,7 +237,11 @@
                   </button>
                 )}
               </div>
-              {cameraError && <p className="text-red-500 text-sm font-bold mt-2 text-center">{cameraError}</p>}
+              {cameraError && (
+                <div className="bg-red-50 border border-red-200 p-3 rounded mt-2">
+                  <p className="text-red-600 text-sm font-bold text-center break-words">{cameraError}</p>
+                </div>
+              )}
             </div>
 
             {scanMessage && (
